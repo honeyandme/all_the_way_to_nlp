@@ -1,0 +1,29 @@
+劳 B-NAME
+塔 I-NAME
+， O
+阿 B-CONT
+联 I-CONT
+酋 I-CONT
+足 B-TITLE
+球 I-TITLE
+运 I-TITLE
+动 I-TITLE
+员 I-TITLE
+
+B B-NAME
+费 I-NAME
+， O
+西 B-CONT
+班 I-CONT
+牙 I-CONT
+篮 B-TITLE
+球 I-TITLE
+运 I-TITLE
+动 I-TITLE
+员 I-TITLE
+
+网 B-NAME
+球 I-TITLE
+运 I-TITLE
+动 I-TITLE
+员 I-TITLE

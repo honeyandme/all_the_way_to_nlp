@@ -1,0 +1,29 @@
+梅 B-NAME
+西 I-NAME
+， O
+阿 B-CONT
+根 I-CONT
+廷 I-CONT
+足 B-TITLE
+球 I-TITLE
+运 I-TITLE
+动 I-TITLE
+员 I-TITLE
+
+C B-NAME
+罗 I-NAME
+， O
+葡 B-CONT
+萄 I-CONT
+牙 I-CONT
+足 B-TITLE
+球 I-TITLE
+运 I-TITLE
+动 I-TITLE
+员 I-TITLE
+
+足 B-TITLE
+球 I-TITLE
+运 I-TITLE
+动 I-TITLE
+员 I-TITLE
