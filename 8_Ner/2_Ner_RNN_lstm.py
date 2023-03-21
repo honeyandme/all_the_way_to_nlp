@@ -22,6 +22,12 @@ def get_data(path):
         tag.append(ta)
     return all_text,all_tag
 def build_word(all_data):
+    word2idx = {"PAD":0,"UNK":1}
+    for data in all_data:
+        for w in data:
+            word2idx[w] = word2idx.get(w,len(word2idx))
+    return word2idx
+def build_tag(all_data):
     word2idx = {"PAD":0,"UNK":1,"O":2}
     for data in all_data:
         for w in data:
@@ -54,7 +60,9 @@ class NModel(nn.Module):
         super().__init__()
         self.embedding = nn.Embedding(crop_len,embedding_num)
 
-        self.rnn = nn.LSTM(input_size = embedding_num,hidden_size=hidden_num,num_layers=2,batch_first=True,bidirectional=True)
+        #self.rnn = nn.LSTM(input_size = embedding_num,hidden_size=hidden_num,num_layers=2,batch_first=True,bidirectional=True)
+        self.rnn = nn.GRU(input_size = embedding_num,hidden_size=hidden_num,num_layers=1,batch_first=True,bidirectional=True)
+
         self.classifier = nn.Linear(hidden_num*2,class_num)
         self.loss_fn = nn.CrossEntropyLoss()
     def forward(self,x,label=None):
@@ -71,7 +79,7 @@ if __name__ == '__main__':
     dev_text, dev_tag = get_data(os.path.join('..', 'data', 'ner', 'BIESO', 'dev.txt'))
     maxlen = 50
     word2idx = build_word(all_text)
-    tag2idx = build_word(all_tag)
+    tag2idx = build_tag(all_tag)
     idx2tag = list(tag2idx)
 
     crop_len = len(word2idx)
