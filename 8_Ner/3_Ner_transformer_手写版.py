@@ -82,6 +82,8 @@ class Multi_Head_self_Attention(nn.Module):
         self.W_Q = nn.Linear(embedding_num,embedding_num,bias=False)
         self.W_K = nn.Linear(embedding_num, embedding_num,bias=False)
         self.W_V = nn.Linear(embedding_num, embedding_num,bias=False)
+
+        
         self.softmax = nn.Softmax(dim=-1)
     def forward(self,x):
         b,l,n = x.shape
