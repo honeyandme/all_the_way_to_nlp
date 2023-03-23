@@ -6,8 +6,9 @@ import os
 from tqdm import tqdm
 from seqeval.metrics import f1_score,precision_score,recall_score
 from transformers import logging
-
+import pickle
 logging.set_verbosity_warning()
+
 def get_data(path):
     all_text_tag = []
     with open(path,'r',encoding='utf8') as f:
@@ -23,15 +24,20 @@ def get_data(path):
         te,ta = data
         sen.append(te)
         tag.append(ta)
-    all_text_tag = sorted(all_text_tag,key=lambda x:len(x[0]))
+    all_text_tag = sorted(all_text_tag,key=lambda x:len(x[0]),reverse=True)
     all_text = [x[0] for x in all_text_tag]
     all_tag = [x[1] for x in all_text_tag]
     return all_text,all_tag
 def build_tag(all_data):
-    word2idx = {"PAD":0,"UNK":100,"O":2}
+    if(os.path.exists('tag2idx.pickle')):
+        with open('tag2idx.pickle','rb') as f:
+            return pickle.load(f)
+    word2idx = {"PAD":0,"UNK":1,"O":2}
     for data in all_data:
         for w in data:
             word2idx[w] = word2idx.get(w,len(word2idx))
+    with open('tag2idx.pickle', 'wb') as f:
+        pickle.dump(word2idx,f)
     return word2idx
 class NDataset(Dataset):
     def __init__(self,all_text,all_tag,tokenizer,tag2idx):
@@ -83,13 +89,16 @@ class Bmodel(nn.Module):
 
 
 if __name__ == "__main__":
-    all_text, all_tag = get_data(os.path.join('..', 'data', 'ner', 'BIESO', 'train.txt'))
-    dev_text, dev_tag = get_data(os.path.join('..', 'data', 'ner', 'BIESO', 'dev.txt'))
+    mode = 'BIESO'#指定标注模式
+    all_text, all_tag = get_data(os.path.join('..', 'data', 'ner', mode, 'train.txt'))
+    dev_text, dev_tag = get_data(os.path.join('..', 'data', 'ner', mode, 'dev.txt'))
 
     epoch = 10
     lr = 0.00001
     batch_size = 20
+    full_train = False #是否加载已经训练的结果
 
+    #apple gpu
     device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
     tag2idx = build_tag(all_tag)
     idx2tag = list(tag2idx)
@@ -103,7 +112,11 @@ if __name__ == "__main__":
 
 
     model = Bmodel(len(tag2idx)).to(device)
+    if os.path.exists(f'best_{mode}.pt'):
+        model.load_state_dict(torch.load(f'best_{mode}.pt'))
     opt = torch.optim.Adam(model.parameters(),lr = lr)
+    best_f1 = -1
+    print(f'train on {device}...')
     for e in range(epoch):
         loss_sum = 0
         ba = 0
@@ -126,4 +139,10 @@ if __name__ == "__main__":
             pre = model(x).reshape(-1)
             pre = [idx2tag[i] for i in pre[1:batch_len+1]]
             all_pre.append(pre)
-        print(f'f1_score={f1_score(all_pre, dev_tag):.2f} precision_score={precision_score(all_pre, dev_tag):.5f} recall_score={recall_score(all_pre, dev_tag):.5f}')
+        f1 = f1_score(all_pre, dev_tag)
+        if f1>best_f1:
+            best_f1 = f1
+            print(f'f1_score={f1:.2f}---------------------------------->best')
+            torch.save(model.state_dict(), f'best_{mode}.pt')
+        else:
+            print(f'f1_score={f1:.2f}')
