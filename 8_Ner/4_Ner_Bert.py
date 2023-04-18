@@ -10,23 +10,22 @@ import pickle
 logging.set_verbosity_warning()
 
 def get_data(path):
-    all_text_tag = []
+    all_text,all_tag = [],[]
     with open(path,'r',encoding='utf8') as f:
         all_data = f.read().split('\n')
+
     sen,tag = [],[]
     for data in all_data:
         data = data.split(' ')
         if(len(data)!=2):
             if len(sen)>2:
-                all_text_tag.append((sen,tag))
+                all_text.append(sen)
+                all_tag.append(tag)
             sen, tag = [], []
             continue
         te,ta = data
         sen.append(te)
         tag.append(ta)
-    all_text_tag = sorted(all_text_tag,key=lambda x:len(x[0]),reverse=True)
-    all_text = [x[0] for x in all_text_tag]
-    all_tag = [x[1] for x in all_text_tag]
     return all_text,all_tag
 def build_tag(all_data):
     if(os.path.exists('tag2idx.pickle')):
