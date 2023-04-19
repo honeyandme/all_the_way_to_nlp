@@ -66,7 +66,18 @@ class Bmodel(nn.Module):
             loss = self.loss_fn(pre.reshape(-1,pre.shape[-1]),y.reshape(-1))
             return loss
         return torch.argmax(pre,dim=-1)
+def same_seeds(seed):
+    torch.manual_seed(seed)  # 固定随机种子（CPU）
+    if torch.cuda.is_available():  # 固定随机种子（GPU)
+        # torch.cuda.manual_seed(seed)  # 为当前GPU设置
+        # torch.cuda.manual_seed_all(seed)  # 为所有GPU设置
+        torch.mps.manual_seed(seed)
+        torch.mps.manual_seed_all(seed)
+    #np.random.seed(seed)  # 保证后续使用random函数时，产生固定的随机数
+    torch.backends.cudnn.benchmark = False  # GPU、网络结构固定，可设置为True
+    torch.backends.cudnn.deterministic = True  # 固定网络结构
 if __name__ == "__main__":
+    same_seeds(3407)
     train_text,train_tag = get_data(os.path.join('data','train_small.jsonl'))
     dev_text, dev_tag = get_data(os.path.join('data', 'val_small.jsonl'))
     tag_2_index = build_tag_2_index(train_tag)
