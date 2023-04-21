@@ -1,4 +1,5 @@
 import os
+import random
 from torch.utils.data import Dataset,DataLoader
 from transformers import BertModel,BertTokenizerFast
 def read_data(path):
@@ -69,6 +70,76 @@ class C_Dataset(Dataset):
             if input_ids[i:i+l]==ids:
                 return i,i+l-1
         return None
+    def multihot(self,hot_len,pos):
+        return [1 if i in pos else 0 for i in range(hot_len)]
+    def operate_data(self,batch_data):
+        batch_text = {
+            "text":[],
+            "input_ids": [],
+            "offset_mapping": [],
+            "triple_list": [],
+        }
+        batch_mask = []
+        batch_sub = {
+            "heads_seq":[],
+            "tails_seq":[]
+        }
+        batch_sub_rnd = {
+            "heads_seq": [],
+            "tails_seq": []
+        }
+        batch_obj_rel = {
+            "heads_mx":[],
+            "tails_mx":[],
+        }
+
+        max_len = 0
+        for item in batch_data:
+            max_len = max(max_len,len(item['input_ids']))
+
+        for item in batch_data:
+            input_ids = item['input_ids']
+            input_len = len(input_ids)
+            pad_len = max_len-input_len
+            input_ids += [0]* pad_len
+
+            batch_text['text'].append(item['text'])
+            batch_text['input_ids'].append(input_ids)
+            batch_text['offset_mapping'].append(item['offset_mapping'])
+            batch_text['triple_list'].append(item['triple_list'])
+
+            mask = [1]*input_len+[0]*pad_len
+
+            batch_mask.append(mask)
+
+            sub_heads_seq = self.multihot(max_len,item['sub_head_ids'])
+            sub_tails_seq = self.multihot(max_len,item['sub_tail_ids'])
+
+            batch_sub['heads_seq'].append(sub_heads_seq)
+            batch_sub['tails_seq'].append(sub_tails_seq)
+
+            #随机挑选
+            sub_rnd_head,sub_end_tail = random.choice(item['triple_id_list'])[0]
+            #sub_rnd_head_2_tail = self.multihot(max_len,[sub_rnd_head,sub_end_tail])
+            sub_rnd_head_seq = self.multihot(max_len,[sub_rnd_head])
+            sub_rnd_tail_seq = self.multihot(max_len, [sub_end_tail])
+
+            batch_sub_rnd['heads_seq'].append(sub_rnd_head_seq)
+            batch_sub_rnd['tails_seq'].append(sub_rnd_tail_seq)
+
+            obj_head_mx = [[0]*len(self.rel_2_index) for i in range(max_len)]
+            obj_tail_mx = [[0]*len(self.rel_2_index) for i in range(max_len)]
+            for triple in item['triple_id_list']:
+                rel_id = triple[1][0]
+                head_id,tail_id = triple[2]
+                obj_head_mx[head_id][rel_id] = 1
+                obj_tail_mx[tail_id][rel_id] = 1
+
+            batch_obj_rel['heads_mx'].append(obj_head_mx)
+            batch_obj_rel['tails_mx'].append(obj_tail_mx)
+        return batch_text,batch_mask,batch_sub,batch_sub_rnd,batch_obj_rel
+
+
     def __len__(self):
         return len(self.all_data)
 
@@ -76,14 +147,14 @@ if __name__ == "__main__":
     train_data = read_data(os.path.join('data2','duie_dev.json'))
     rel_2_index,index_2_rel = build_rel_2_index()
 
-    batch_size = 2
+    batch_size = 10
     epoch = 1
     model_name = '../data/bert_base_chinese'
 
     tokenizer = BertTokenizerFast.from_pretrained(model_name)
     train_dataset = C_Dataset(train_data,rel_2_index,tokenizer)
-    train_dataloader = DataLoader(train_dataset,shuffle=False,batch_size=batch_size)
+    train_dataloader = DataLoader(train_dataset,shuffle=False,batch_size=batch_size,collate_fn=train_dataset.operate_data)
 
     for e in range(epoch):
-        for x,y in train_dataloader:
-            pass
+        for batch_text,batch_mask,batch_sub,batch_sub_rnd,batch_obj_rel in train_dataloader:
+            print()
