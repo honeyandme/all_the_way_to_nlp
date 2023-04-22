@@ -2,15 +2,18 @@ import os
 import random
 import torch
 from torch import nn
+from tqdm import tqdm
 from torch.utils.data import Dataset,DataLoader
 from transformers import BertModel,BertTokenizerFast
-def read_data(path):
+def read_data(path,num=None):
     with open(path,'r',encoding='utf-8') as f:
         all_data = f.read().split('\n')
     ev_data = []
     for data in all_data:
         if len(data)>0:
             ev_data.append(eval(data))
+    if num is not None:
+        return ev_data[:num]
     return ev_data
 def build_rel_2_index():
     with open(os.path.join('data2','rel.txt'),'r',encoding='utf-8') as f:
@@ -161,19 +164,19 @@ class Cas_Model(nn.Module):
         bert_0,bert_1 = self.bert(input_ids,attention_mask=mask,return_dict=False)
         return bert_0
     def get_sub_pre(self,text_encode):
-        sub_head_pre = self.sigmoid(self.sub_head_linear(text_encode))
-        sub_tail_pre = self.sigmoid(self.sub_tail_linear(text_encode))
+        sub_head_pre = torch.sigmoid(self.sub_head_linear(text_encode))
+        sub_tail_pre = torch.sigmoid(self.sub_tail_linear(text_encode))
 
         return sub_head_pre,sub_tail_pre
     def get_obj_pre(self,text_encode,heads_seq,tails_seq):
         heads_seq = heads_seq.unsqueeze(1).float()
         tails_seq = tails_seq.unsqueeze(1).float()
 
-        W1 = heads_seq @ text_encode
-        W2 = tails_seq @ text_encode
+        W1 = torch.matmul(heads_seq , text_encode)
+        W2 = torch.matmul(tails_seq , text_encode)
         text_encode = text_encode +(W1+W2)/2
-        obj_head_pre = self.sigmoid(self.obj_head_linear(text_encode))
-        obj_tail_pre = self.sigmoid(self.obj_tail_linear(text_encode))
+        obj_head_pre = torch.sigmoid(self.obj_head_linear(text_encode))
+        obj_tail_pre = torch.sigmoid(self.obj_tail_linear(text_encode))
         return obj_head_pre,obj_tail_pre
     def forward(self,input,mask):
         input_ids,heads_seq,tails_seq = input
@@ -183,28 +186,60 @@ class Cas_Model(nn.Module):
         obj_head_pre, obj_tail_pre = self.get_obj_pre(text_encode,heads_seq,tails_seq)
 
         return sub_head_pre, sub_tail_pre, obj_head_pre, obj_tail_pre
+    def cal_loss(self,x,y,mask):
+        x = x.squeeze(-1)
+        if x.shape!=mask.shape:
+            mask = mask.unsqueeze(-1)
+        x=x*mask
+        return nn.functional.binary_cross_entropy(x,y.float())
+
+    def loss_fn(self,pre_y,true_y,mask):
+        sub_head_pre, sub_tail_pre, obj_head_pre, obj_tail_pre = pre_y
+        sub_head_label, sub_tail_label, obj_head_label, obj_tail_label = true_y
+
+        loss1 = self.cal_loss(sub_head_pre,sub_head_label,mask)
+        loss2 = self.cal_loss(sub_tail_pre, sub_tail_label, mask)
+        loss3 = self.cal_loss(obj_head_pre, obj_head_label, mask)
+        loss4 = self.cal_loss(obj_tail_pre, obj_tail_label, mask)
+        loss = loss1+loss2+loss3+loss4
+        return loss
 
 if __name__ == "__main__":
-    train_data = read_data(os.path.join('data2','duie_dev.json'))
+    train_data = read_data(os.path.join('data2','duie_dev.json'),2000)
     rel_2_index,index_2_rel = build_rel_2_index()
 
-    batch_size = 10
-    epoch = 1
+    batch_size = 20
+    epoch = 10
     model_name = '../data/bert_base_chinese'
+    lr = 1e-5
+    device = "mps" if torch.backends.mps.is_available() else "cpu"
+    # device="cpu"
 
     tokenizer = BertTokenizerFast.from_pretrained(model_name)
     train_dataset = C_Dataset(train_data,rel_2_index,tokenizer)
-    train_dataloader = DataLoader(train_dataset,shuffle=False,batch_size=batch_size,collate_fn=train_dataset.operate_data)
+    train_dataloader = DataLoader(train_dataset,shuffle=True,batch_size=batch_size,collate_fn=train_dataset.operate_data)
 
-    model = Cas_Model(model_name,len(rel_2_index))
+    model = Cas_Model(model_name,len(rel_2_index)).to(device)
+    opt = torch.optim.Adam(model.parameters(),lr=lr)
     for e in range(epoch):
-        for batch_text,batch_mask,batch_sub,batch_sub_rnd,batch_obj_rel in train_dataloader:
-
+        for batch_text,batch_mask,batch_sub,batch_sub_rnd,batch_obj_rel in tqdm(train_dataloader):
             input = (
-                torch.tensor(batch_text['input_ids']),
-                torch.tensor(batch_sub_rnd['heads_seq']),
-                torch.tensor(batch_sub_rnd['tails_seq']),
+                torch.tensor(batch_text['input_ids']).to(device),
+                torch.tensor(batch_sub_rnd['heads_seq']).to(device),
+                torch.tensor(batch_sub_rnd['tails_seq']).to(device),
 
             )
-            mask = torch.tensor(batch_mask)
-            model.forward(input,mask)
+            mask = torch.tensor(batch_mask).to(device)
+            pre_y = model.forward(input,mask)
+
+            true_y = (
+                torch.tensor(batch_sub['heads_seq']).to(device),
+                torch.tensor(batch_sub['tails_seq']).to(device),
+                torch.tensor(batch_obj_rel['heads_mx']).to(device),
+                torch.tensor(batch_obj_rel['tails_mx']).to(device),
+            )
+            opt.zero_grad()
+            loss = model.loss_fn(pre_y,true_y,mask)
+            loss.backward()
+            opt.step()
+        print(loss.item())
