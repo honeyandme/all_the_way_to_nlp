@@ -1,5 +1,7 @@
 import os
 import random
+import torch
+from torch import nn
 from torch.utils.data import Dataset,DataLoader
 from transformers import BertModel,BertTokenizerFast
 def read_data(path):
@@ -143,6 +145,45 @@ class C_Dataset(Dataset):
     def __len__(self):
         return len(self.all_data)
 
+class Cas_Model(nn.Module):
+    def __init__(self,model_name,rel_num):
+        super(Cas_Model, self).__init__()
+        self.bert = BertModel.from_pretrained(model_name)
+
+        self.sub_head_linear = nn.Linear(768,1)
+        self.sub_tail_linear = nn.Linear(768,1)
+
+        self.obj_head_linear = nn.Linear(768,rel_num)
+        self.obj_tail_linear = nn.Linear(768,rel_num)
+
+        self.sigmoid = nn.Sigmoid()
+    def get_text_encode(self,input_ids,mask):
+        bert_0,bert_1 = self.bert(input_ids,attention_mask=mask,return_dict=False)
+        return bert_0
+    def get_sub_pre(self,text_encode):
+        sub_head_pre = self.sigmoid(self.sub_head_linear(text_encode))
+        sub_tail_pre = self.sigmoid(self.sub_tail_linear(text_encode))
+
+        return sub_head_pre,sub_tail_pre
+    def get_obj_pre(self,text_encode,heads_seq,tails_seq):
+        heads_seq = heads_seq.unsqueeze(1).float()
+        tails_seq = tails_seq.unsqueeze(1).float()
+
+        W1 = heads_seq @ text_encode
+        W2 = tails_seq @ text_encode
+        text_encode = text_encode +(W1+W2)/2
+        obj_head_pre = self.sigmoid(self.obj_head_linear(text_encode))
+        obj_tail_pre = self.sigmoid(self.obj_tail_linear(text_encode))
+        return obj_head_pre,obj_tail_pre
+    def forward(self,input,mask):
+        input_ids,heads_seq,tails_seq = input
+        text_encode = self.get_text_encode(input_ids,mask)
+
+        sub_head_pre, sub_tail_pre = self.get_sub_pre(text_encode)
+        obj_head_pre, obj_tail_pre = self.get_obj_pre(text_encode,heads_seq,tails_seq)
+
+        return sub_head_pre, sub_tail_pre, obj_head_pre, obj_tail_pre
+
 if __name__ == "__main__":
     train_data = read_data(os.path.join('data2','duie_dev.json'))
     rel_2_index,index_2_rel = build_rel_2_index()
@@ -155,6 +196,15 @@ if __name__ == "__main__":
     train_dataset = C_Dataset(train_data,rel_2_index,tokenizer)
     train_dataloader = DataLoader(train_dataset,shuffle=False,batch_size=batch_size,collate_fn=train_dataset.operate_data)
 
+    model = Cas_Model(model_name,len(rel_2_index))
     for e in range(epoch):
         for batch_text,batch_mask,batch_sub,batch_sub_rnd,batch_obj_rel in train_dataloader:
-            print()
+
+            input = (
+                torch.tensor(batch_text['input_ids']),
+                torch.tensor(batch_sub_rnd['heads_seq']),
+                torch.tensor(batch_sub_rnd['tails_seq']),
+
+            )
+            mask = torch.tensor(batch_mask)
+            model.forward(input,mask)
