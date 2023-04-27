@@ -75,8 +75,7 @@ class C_Dataset(Dataset):
             if input_ids[i:i+l]==ids:
                 return i,i+l-1
         return None
-    def multihot(self,hot_len,pos):
-        return [1 if i in pos else 0 for i in range(hot_len)]
+
     def operate_data(self,batch_data):
         batch_text = {
             "text":[],
@@ -117,8 +116,8 @@ class C_Dataset(Dataset):
 
             batch_mask.append(mask)
 
-            sub_heads_seq = self.multihot(max_len,item['sub_head_ids'])
-            sub_tails_seq = self.multihot(max_len,item['sub_tail_ids'])
+            sub_heads_seq = multihot(max_len,item['sub_head_ids'])
+            sub_tails_seq = multihot(max_len,item['sub_tail_ids'])
 
             batch_sub['heads_seq'].append(sub_heads_seq)
             batch_sub['tails_seq'].append(sub_tails_seq)
@@ -126,8 +125,8 @@ class C_Dataset(Dataset):
             #随机挑选
             sub_rnd_head,sub_end_tail = random.choice(item['triple_id_list'])[0]
             #sub_rnd_head_2_tail = self.multihot(max_len,[sub_rnd_head,sub_end_tail])
-            sub_rnd_head_seq = self.multihot(max_len,[sub_rnd_head])
-            sub_rnd_tail_seq = self.multihot(max_len, [sub_end_tail])
+            sub_rnd_head_seq = multihot(max_len,[sub_rnd_head])
+            sub_rnd_tail_seq = multihot(max_len, [sub_end_tail])
 
             batch_sub_rnd['heads_seq'].append(sub_rnd_head_seq)
             batch_sub_rnd['tails_seq'].append(sub_rnd_tail_seq)
@@ -147,7 +146,8 @@ class C_Dataset(Dataset):
 
     def __len__(self):
         return len(self.all_data)
-
+def multihot(hot_len,pos):
+    return [1 if i in pos else 0 for i in range(hot_len)]
 class Cas_Model(nn.Module):
     def __init__(self,model_name,rel_num):
         super(Cas_Model, self).__init__()
@@ -179,13 +179,19 @@ class Cas_Model(nn.Module):
         obj_tail_pre = torch.sigmoid(self.obj_tail_linear(text_encode))
         return obj_head_pre,obj_tail_pre
     def forward(self,input,mask):
-        input_ids,heads_seq,tails_seq = input
-        text_encode = self.get_text_encode(input_ids,mask)
+        if len(input)==3:#train mode
+            input_ids,heads_seq,tails_seq = input
+            text_encode = self.get_text_encode(input_ids,mask)
 
-        sub_head_pre, sub_tail_pre = self.get_sub_pre(text_encode)
-        obj_head_pre, obj_tail_pre = self.get_obj_pre(text_encode,heads_seq,tails_seq)
+            sub_head_pre, sub_tail_pre = self.get_sub_pre(text_encode)
+            obj_head_pre, obj_tail_pre = self.get_obj_pre(text_encode,heads_seq,tails_seq)
 
-        return sub_head_pre, sub_tail_pre, obj_head_pre, obj_tail_pre
+            return sub_head_pre, sub_tail_pre, obj_head_pre, obj_tail_pre
+        else:#dev mode
+            input_ids = input[0]
+            text_encode = self.get_text_encode(input_ids, mask)
+            sub_head_pre, sub_tail_pre = self.get_sub_pre(text_encode)
+            return text_encode,(sub_head_pre, sub_tail_pre)
     def cal_loss(self,x,y,mask):
         x = x.squeeze(-1)
         if x.shape!=mask.shape:
@@ -204,8 +210,84 @@ class Cas_Model(nn.Module):
         loss = loss1+loss2+loss3+loss4
         return loss
 
+def get_eneity(text,hp,tp,offset_map,mask):
+    all_entity = []
+    i,j = 0,0
+    if hp[i]==0:
+        i+=1
+    while i<len(hp) and j<len(tp) and mask[hp[i]]==1 and mask[tp[j]]==1:#还要小于mask
+        if hp[i]<=tp[j]:
+            pl = offset_map[hp[i]][0]
+            pr = offset_map[tp[j]][1]
+            all_entity.append((text[pl:pr],hp[i],tp[j]))
+            i = i+1
+            j = j+1
+        else:
+            j = j+1
+    return all_entity
+
+def from_sub_get_rel_and_obj(model,text_encode,sub_be,sub_ed,text,offset_map,mask,sub):
+    sub_be_muti = multihot(len(mask),[sub_be])
+    sub_ed_muti = multihot(len(mask),[sub_ed])
+
+    sub_be_muti = torch.tensor(sub_be_muti).to(device).unsqueeze(0)
+    sub_ed_muti = torch.tensor(sub_ed_muti).to(device).unsqueeze(0)
+
+    obj_head_pre,obj_tail_pre = model.get_obj_pre(text_encode,sub_be_muti,sub_ed_muti)
+
+    obj_head_pre, obj_tail_pre = obj_head_pre[0].T,obj_tail_pre[0].T
+    sub_rel_obj = []
+    for i in range(obj_head_pre.shape[0]):
+        o_h = obj_head_pre[i].squeeze(-1)
+        o_t = obj_tail_pre[i].squeeze(-1)
+        o_h = torch.where(o_h>0.5)[0].tolist()
+        o_t = torch.where(o_t>0.5)[0].tolist()
+        if len(o_h)==0 or len(o_t)==0:
+            continue
+        all_obj = get_eneity(text,o_h,o_t,offset_map,mask)
+        for obj in all_obj:
+            sub_rel_obj.append((sub,index_2_rel[i],obj[0]))
+    return sub_rel_obj
+
+
+def report(model,texts,batch_pre_y,batch_triple_list,batch_mask,batch_offset_mapping,text_encode):
+    all_pre = []
+    correct_num, predict_num, gold_num = 0, 0, 0
+    sub_head_pre, sub_tail_pre = batch_pre_y
+    for i in range(sub_head_pre.shape[0]):
+        #获取每个batch数据
+        text = texts[i]
+        single_sub_head = sub_head_pre[i]
+        single_sub_tail = sub_tail_pre[i]
+        mask = batch_mask[i]
+        offset_mapping = batch_offset_mapping[i]
+        triple_list = batch_triple_list[i]
+
+        #获取sub的头位置
+        single_sub_head = single_sub_head.squeeze(dim=-1)
+        head_all_pos = torch.where(single_sub_head>0.5)[0].tolist()
+        #获取sub的尾位置
+        single_sub_tail = single_sub_tail.squeeze(dim=-1)
+        tail_all_pos = torch.where(single_sub_tail > 0.5)[0].tolist()
+
+        all_sub = get_eneity(text,head_all_pos,tail_all_pos,offset_mapping,mask)
+
+        all_sub = all_sub[0:1]
+        sub_rel_obj = []
+        for sub_information in all_sub:
+            sub_rel_obj.extend(from_sub_get_rel_and_obj(model,text_encode[i],sub_information[1],sub_information[2],text,offset_mapping,mask,sub_information[0]))
+
+        all_pre.append(sub_rel_obj)
+        # triple_list
+
+        correct_num += len(set(sub_rel_obj) & set(triple_list))
+        predict_num += len(sub_rel_obj)
+        gold_num += len(set(triple_list))
+
+    return all_pre,correct_num, predict_num, gold_num
 if __name__ == "__main__":
-    train_data = read_data(os.path.join('data2','duie_dev.json'),2000)
+    train_data = read_data(os.path.join('data2','duie_train.json'),200)
+    dev_data = read_data(os.path.join('data2', 'duie_dev.json'), 200)
     rel_2_index,index_2_rel = build_rel_2_index()
 
     batch_size = 20
@@ -218,28 +300,53 @@ if __name__ == "__main__":
     tokenizer = BertTokenizerFast.from_pretrained(model_name)
     train_dataset = C_Dataset(train_data,rel_2_index,tokenizer)
     train_dataloader = DataLoader(train_dataset,shuffle=True,batch_size=batch_size,collate_fn=train_dataset.operate_data)
+    dev_dataset = C_Dataset(dev_data, rel_2_index, tokenizer)
+    dev_dataloader = DataLoader(dev_dataset, shuffle=False, batch_size=batch_size,
+                                  collate_fn=dev_dataset.operate_data)
 
     model = Cas_Model(model_name,len(rel_2_index)).to(device)
     opt = torch.optim.Adam(model.parameters(),lr=lr)
     for e in range(epoch):
-        for batch_text,batch_mask,batch_sub,batch_sub_rnd,batch_obj_rel in tqdm(train_dataloader):
+        model.train()
+        # for batch_text,batch_mask,batch_sub,batch_sub_rnd,batch_obj_rel in tqdm(train_dataloader):
+        #     input = (
+        #         torch.tensor(batch_text['input_ids']).to(device),
+        #         torch.tensor(batch_sub_rnd['heads_seq']).to(device),
+        #         torch.tensor(batch_sub_rnd['tails_seq']).to(device),
+        #
+        #     )
+        #     mask = torch.tensor(batch_mask).to(device)
+        #     pre_y = model.forward(input,mask)
+        #
+        #     true_y = (
+        #         torch.tensor(batch_sub['heads_seq']).to(device),
+        #         torch.tensor(batch_sub['tails_seq']).to(device),
+        #         torch.tensor(batch_obj_rel['heads_mx']).to(device),
+        #         torch.tensor(batch_obj_rel['tails_mx']).to(device),
+        #     )
+        #     opt.zero_grad()
+        #     loss = model.loss_fn(pre_y,true_y,mask)
+        #     loss.backward()
+        #     opt.step()
+        correct_num, predict_num, gold_num = 0,0,0
+        model.eval()
+        for batch_text,batch_mask,batch_sub,batch_sub_rnd,batch_obj_rel in tqdm(dev_dataloader):
             input = (
                 torch.tensor(batch_text['input_ids']).to(device),
-                torch.tensor(batch_sub_rnd['heads_seq']).to(device),
-                torch.tensor(batch_sub_rnd['tails_seq']).to(device),
-
             )
-            mask = torch.tensor(batch_mask).to(device)
-            pre_y = model.forward(input,mask)
+            batch_mask = torch.tensor(batch_mask).to(device)
+            text_encode,batch_pre_y = model.forward(input, batch_mask)
 
-            true_y = (
-                torch.tensor(batch_sub['heads_seq']).to(device),
-                torch.tensor(batch_sub['tails_seq']).to(device),
-                torch.tensor(batch_obj_rel['heads_mx']).to(device),
-                torch.tensor(batch_obj_rel['tails_mx']).to(device),
-            )
-            opt.zero_grad()
-            loss = model.loss_fn(pre_y,true_y,mask)
-            loss.backward()
-            opt.step()
-        print(loss.item())
+            batch_triple_list = batch_text['triple_list']
+            batch_offset_mapping = batch_text['offset_mapping']
+            text = batch_text['text']
+            all_pre,d_c,d_p,d_g = report(model,text,batch_pre_y,batch_triple_list,batch_mask,batch_offset_mapping,text_encode)
+
+            correct_num += d_c
+            predict_num += d_p
+            gold_num += d_g
+        precision = correct_num / (predict_num + 1e-8)
+        reacall = correct_num / (gold_num + 1e-8)
+        f1_score = 2 * precision * reacall / (precision + reacall + 1e-8)
+
+        print(f"f1:{f1_score:.3f},predict_num:{predict_num},gold_num:{gold_num}")
