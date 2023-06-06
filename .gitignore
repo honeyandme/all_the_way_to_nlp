@@ -168,3 +168,5 @@ cython_debug/
 *.t
 bert_base_chinese/
 *.pickle
+Erlangshen-DeBERTa-v2-320M-Chinese/
+chinese-roberta-wwm-ext/
