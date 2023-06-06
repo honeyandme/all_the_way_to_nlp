@@ -2,6 +2,7 @@ import pandas as pd
 import torch
 from torch import nn
 from tqdm import tqdm
+from sklearn.metrics import accuracy_score
 from torch.utils.data import Dataset,DataLoader
 from transformers import AutoTokenizer,AutoModel
 class sen_dataset(Dataset):
@@ -50,20 +51,31 @@ if __name__ == "__main__":
     train_df = pd.read_csv('data/ants/train.csv')
     dev_df = pd.read_csv('data/ants/dev.csv')
 
+    train_df = train_df[:1000]
+    dev_df = dev_df[:500]
+
     model = '../data/chinese-roberta-wwm-ext'
     num_class = 2
     max_length = 128
-    epoch = 1
-    batch_size = 10
+    epoch = 10
+    batch_size = 40
     lr = 1e-5
     device = "mps" if torch.backends.mps.is_available() else "cpu"
+    # device = "cpu"
 
     tokenizer = AutoTokenizer.from_pretrained(model)
+
     train_dataset = sen_dataset(train_df)
     train_dataloader = DataLoader(train_dataset,shuffle=False,batch_size=batch_size,collate_fn=sen_dataset.collate_fn)
+    dev_dataset = sen_dataset(dev_df)
+    dev_dataloader = DataLoader(dev_dataset, shuffle=False, batch_size=batch_size,
+                                  collate_fn=sen_dataset.collate_fn)
+
     model = DeBert_Model(model).to(device)
     opt = torch.optim.Adam(model.parameters(),lr = lr)
     for e in range(epoch):
+        train_model_pre = []
+        train_labels = []
         for bi,(x,at_mask,y) in enumerate(tqdm(train_dataloader)):
             x = x.to(device)
             at_mask = at_mask.to(device)
@@ -72,5 +84,22 @@ if __name__ == "__main__":
             loss,logits,sentence_embedding = model(x,at_mask,y)
             loss.backward()
             opt.step()
-            if bi%100==0:
-                print(loss)
+
+            train_model_pre.extend(torch.argmax(logits,dim=-1).cpu().numpy().tolist())
+            train_labels.extend(y.cpu().numpy().tolist())
+        train_acc = accuracy_score(train_model_pre,train_labels)
+
+
+        dev_model_pre = []
+        dev_labels = []
+        for bi,(x,at_mask,y) in enumerate(tqdm(dev_dataloader)):
+            x = x.to(device)
+            at_mask = at_mask.to(device)
+            y = y.to(device)
+            logits,sentence_embedding = model(x,at_mask)
+
+            dev_model_pre.extend(torch.argmax(logits,dim=-1).cpu().numpy().tolist())
+            dev_labels.extend(y.cpu().numpy().tolist())
+        dev_acc = accuracy_score(dev_model_pre,dev_labels)
+        print(f'e = {e},train_acc = {train_acc:.3f},dev_acc = {dev_acc:.3f}')
+
