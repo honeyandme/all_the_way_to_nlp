@@ -1,5 +1,7 @@
 import pandas as pd
 import torch
+import numpy as np
+import random
 from torch import nn
 from tqdm import tqdm
 from sklearn.metrics import accuracy_score
@@ -30,23 +32,32 @@ class sen_dataset(Dataset):
         return len(self.df)
 class MeanPooling(nn.Module):
     def forward(self,last_hidden_state,mask):
-        mask = mask.unsqueeze(dim=2).expand(-1, -1, 768)
+        mask = mask.unsqueeze(dim=2).expand(last_hidden_state.shape).float()
 
         sum_hidden = torch.sum(last_hidden_state*mask,dim=1)
         sum_mask = torch.sum(mask,dim=1)
         sum_mask = torch.clip(sum_mask,min=1e-9)
 
-        mean_hidden = torch.mean(sum_hidden/sum_mask)
+        mean_hidden = sum_hidden/sum_mask
 
 
 
         return mean_hidden
 class MaxPooling(nn.Module):
-    def forward(self, last_hidden_state):
-        return torch.max(last_hidden_state, dim=1)
+    def forward(self, last_hidden_state,mask):
+        mask = mask.unsqueeze(dim=2).expand(last_hidden_state.shape).float()
+
+        last_hidden_state[mask == 0] = -100
+
+        return torch.max(last_hidden_state, dim=1)[0]
 class MinPooling(nn.Module):
-    def forward(self, last_hidden_state):
-        return torch.min(last_hidden_state, dim=1)
+    def forward(self, last_hidden_state,mask):
+        mask = mask.unsqueeze(dim=2).expand(last_hidden_state.shape).float()
+
+        last_hidden_state[mask==0] = 100
+
+        return torch.min(last_hidden_state,dim=1)[0]
+
 class DeBert_Model(nn.Module):
     def __init__(self,model,get_sentence_embedding_method):
         super(DeBert_Model, self).__init__()
@@ -54,6 +65,8 @@ class DeBert_Model(nn.Module):
         self.fc = nn.Linear(self.bert.config.hidden_size,num_class)
         self.loss_fn = nn.CrossEntropyLoss()
         self.mean_pooling = MeanPooling()
+        self.min_pooling = MinPooling()
+        self.max_pooling = MaxPooling()
         self.get_sentence_embedding_method = get_sentence_embedding_method
         assert get_sentence_embedding_method in ["CLS","MaxPooling","MeanPooling","MinPooling"]
     def forward(self,x,att_mask,y=None):
@@ -64,20 +77,34 @@ class DeBert_Model(nn.Module):
 
 
         if self.get_sentence_embedding_method == "CLS":   #策略1
-            logits = self.fc(pooler_output)
             sentence_embedding = pooler_output
+            logits = self.fc(sentence_embedding)
         elif self.get_sentence_embedding_method == "MeanPooling":   #策略2
             sentence_embedding = self.mean_pooling(last_hidden_state,att_mask)
-            logits = self.fc(pooler_output)
+            logits = self.fc(sentence_embedding)
         elif self.get_sentence_embedding_method == "MaxPooling":   #策略3
-            pass
+            sentence_embedding = self.max_pooling(last_hidden_state, att_mask)
+            logits = self.fc(sentence_embedding)
         elif self.get_sentence_embedding_method == "MinPooling":   #策略4
-            pass
+            sentence_embedding = self.min_pooling(last_hidden_state, att_mask)
+            logits = self.fc(sentence_embedding)
         if y is not None:
             loss = self.loss_fn(logits,y)
             return loss,logits,sentence_embedding
         return logits,sentence_embedding
+
+
+def setup_seed(seed):
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
+    random.seed(seed)
+    torch.backends.cudnn.deterministic = True
+
+
+
 if __name__ == "__main__":
+    setup_seed(3407)
     train_df = pd.read_csv('data/ants/train.csv')
     dev_df = pd.read_csv('data/ants/dev.csv')
 
@@ -91,17 +118,17 @@ if __name__ == "__main__":
     batch_size = 30
     lr = 0.00001
     device = "mps" if torch.backends.mps.is_available() else "cpu"
-    # device = "cpu"
+    device = "cpu"
 
     tokenizer = AutoTokenizer.from_pretrained(model)
 
     train_dataset = sen_dataset(train_df)
-    train_dataloader = DataLoader(train_dataset,shuffle=False,batch_size=batch_size,collate_fn=sen_dataset.collate_fn)
+    train_dataloader = DataLoader(train_dataset,shuffle=True,batch_size=batch_size,collate_fn=sen_dataset.collate_fn)
     dev_dataset = sen_dataset(dev_df)
     dev_dataloader = DataLoader(dev_dataset, shuffle=False, batch_size=batch_size,
                                   collate_fn=sen_dataset.collate_fn)
 
-    model = DeBert_Model(model,"MeanPooling").to(device)
+    model = DeBert_Model(model,"CLS").to(device)
     opt = torch.optim.Adam(model.parameters(),lr = lr)
     for e in range(epoch):
         train_model_pre = []
