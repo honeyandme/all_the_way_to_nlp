@@ -57,6 +57,19 @@ class MinPooling(nn.Module):
         last_hidden_state[mask==0] = 100
 
         return torch.min(last_hidden_state,dim=1)[0]
+class AttentionPooling(nn.Module):
+    def __init__(self,in_dim=768):
+        super(AttentionPooling, self).__init__()
+        self.linear = nn.Linear(in_dim,1)
+    def forward(self,last_hidden_state,mask):
+        w = self.linear(last_hidden_state).squeeze(-1)
+        w[mask==0] = float("-inf")
+        score = torch.softmax(w,dim=-1)
+
+        score = score.unsqueeze(-1)
+        last_hidden_state = last_hidden_state * score
+        attention_state = torch.sum(last_hidden_state,dim=1)
+        return attention_state
 
 class DeBert_Model(nn.Module):
     def __init__(self,model,get_sentence_embedding_method):
@@ -67,8 +80,9 @@ class DeBert_Model(nn.Module):
         self.mean_pooling = MeanPooling()
         self.min_pooling = MinPooling()
         self.max_pooling = MaxPooling()
+        self.attention_pooling = AttentionPooling()
         self.get_sentence_embedding_method = get_sentence_embedding_method
-        assert get_sentence_embedding_method in ["CLS","MaxPooling","MeanPooling","MinPooling"]
+        assert get_sentence_embedding_method in ["CLS","MaxPooling","MeanPooling","MinPooling","AttentionPooling"]
     def forward(self,x,att_mask,y=None):
         last_hidden_state,pooler_output,ft_all_layers= self.bert(x,attention_mask = att_mask,return_dict=False,output_hidden_states=True)#[0][:,-1,:]
 
@@ -87,6 +101,9 @@ class DeBert_Model(nn.Module):
             logits = self.fc(sentence_embedding)
         elif self.get_sentence_embedding_method == "MinPooling":   #策略4
             sentence_embedding = self.min_pooling(last_hidden_state, att_mask)
+            logits = self.fc(sentence_embedding)
+        elif self.get_sentence_embedding_method == "AttentionPooling":   #策略5
+            sentence_embedding = self.attention_pooling(last_hidden_state, att_mask)
             logits = self.fc(sentence_embedding)
         if y is not None:
             loss = self.loss_fn(logits,y)
@@ -118,7 +135,7 @@ if __name__ == "__main__":
     batch_size = 30
     lr = 0.00001
     device = "mps" if torch.backends.mps.is_available() else "cpu"
-    device = "cpu"
+    # device = "cpu"
 
     tokenizer = AutoTokenizer.from_pretrained(model)
 
@@ -128,7 +145,7 @@ if __name__ == "__main__":
     dev_dataloader = DataLoader(dev_dataset, shuffle=False, batch_size=batch_size,
                                   collate_fn=sen_dataset.collate_fn)
 
-    model = DeBert_Model(model,"CLS").to(device)
+    model = DeBert_Model(model,"AttentionPooling").to(device)
     opt = torch.optim.Adam(model.parameters(),lr = lr)
     for e in range(epoch):
         train_model_pre = []
