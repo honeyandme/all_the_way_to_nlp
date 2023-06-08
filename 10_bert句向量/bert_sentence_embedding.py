@@ -89,20 +89,34 @@ class LSTMPooling(nn.Module):
         out = self.linear(lstm_out)
 
         return out
+class WeightedLayerPooling(nn.Module):
+    def __init__(self,num_hidden_layers:int = 13,layer_start:int = 4):
+        super(WeightedLayerPooling, self).__init__()
+        self.layer_start = layer_start
+        self.num_hidden_layers = num_hidden_layers
 
+        self.layer_weights = nn.Parameter(torch.tensor([1]*(num_hidden_layers-layer_start),dtype=torch.float))
+    def forward(self,ft_all_layers):
+        all_embedding = torch.stack(ft_all_layers[self.layer_start:])
+        weight = self.layer_weights.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).expand(all_embedding.shape)
+        processed_embedding  = torch.mean(all_embedding * weight,dim=0)
+        return processed_embedding
 class DeBert_Model(nn.Module):
     def __init__(self,model,get_sentence_embedding_method):
         super(DeBert_Model, self).__init__()
         self.bert = AutoModel.from_pretrained(model)
         self.fc = nn.Linear(self.bert.config.hidden_size,num_class)
         self.loss_fn = nn.CrossEntropyLoss()
+
         self.mean_pooling = MeanPooling()
         self.min_pooling = MinPooling()
         self.max_pooling = MaxPooling()
         self.attention_pooling = AttentionPooling()
         self.lstmpooling = LSTMPooling()
+        self.weipooling = WeightedLayerPooling()
+
         self.get_sentence_embedding_method = get_sentence_embedding_method
-        assert get_sentence_embedding_method in ["CLS","MaxPooling","MeanPooling","MinPooling","AttentionPooling","LSTMPooling"]
+        assert get_sentence_embedding_method in ["CLS","MaxPooling","MeanPooling","MinPooling","AttentionPooling","LSTMPooling","WeightedLayerPooling"]
     def forward(self,x,att_mask,y=None):
         last_hidden_state,pooler_output,ft_all_layers= self.bert(x,attention_mask = att_mask,return_dict=False,output_hidden_states=True)#[0][:,-1,:]
 
@@ -125,8 +139,12 @@ class DeBert_Model(nn.Module):
         elif self.get_sentence_embedding_method == "AttentionPooling":   #策略5
             sentence_embedding = self.attention_pooling(last_hidden_state, att_mask)
             logits = self.fc(sentence_embedding)
-        elif self.get_sentence_embedding_method == "LSTMPooling":   #策略5
+        elif self.get_sentence_embedding_method == "LSTMPooling":   #策略6
             sentence_embedding = self.lstmpooling(ft_all_layers)
+            logits = self.fc(sentence_embedding)
+        elif self.get_sentence_embedding_method == "WeightedLayerPooling":   #策略7
+            temp = self.weipooling(ft_all_layers)
+            sentence_embedding = self.mean_pooling(temp,att_mask)
             logits = self.fc(sentence_embedding)
         if y is not None:
             loss = self.loss_fn(logits,y)
@@ -148,9 +166,6 @@ if __name__ == "__main__":
     train_df = pd.read_csv('data/ants/train.csv')
     dev_df = pd.read_csv('data/ants/dev.csv')
 
-    train_df = train_df[:2000]
-    dev_df = dev_df[:500]
-
     model = '../data/chinese-roberta-wwm-ext'
     num_class = 2
     max_length = 128
@@ -168,7 +183,7 @@ if __name__ == "__main__":
     dev_dataloader = DataLoader(dev_dataset, shuffle=False, batch_size=batch_size,
                                   collate_fn=sen_dataset.collate_fn)
 
-    model = DeBert_Model(model,"LSTMPooling").to(device)
+    model = DeBert_Model(model,"WeightedLayerPooling").to(device)
     opt = torch.optim.Adam(model.parameters(),lr = lr)
     for e in range(epoch):
         train_model_pre = []
