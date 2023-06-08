@@ -31,13 +31,13 @@ class sen_dataset(Dataset):
     def __len__(self):
         return len(self.df)
 class MeanPooling(nn.Module):
+    def __init__(self):
+        super(MeanPooling, self).__init__()
     def forward(self,last_hidden_state,mask):
         mask = mask.unsqueeze(dim=2).expand(last_hidden_state.shape).float()
-
         sum_hidden = torch.sum(last_hidden_state*mask,dim=1)
         sum_mask = torch.sum(mask,dim=1)
-        sum_mask = torch.clip(sum_mask,min=1e-9)
-
+        sum_mask = torch.clamp(sum_mask,min=1e-9)
         mean_hidden = sum_hidden/sum_mask
 
 
@@ -60,9 +60,14 @@ class MinPooling(nn.Module):
 class AttentionPooling(nn.Module):
     def __init__(self,in_dim=768):
         super(AttentionPooling, self).__init__()
-        self.linear = nn.Linear(in_dim,1)
+        self.layer = nn.Sequential(
+            nn.Linear(in_dim, in_dim),
+            nn.GELU(),
+            nn.Linear(in_dim, 1)
+        )
     def forward(self,last_hidden_state,mask):
-        w = self.linear(last_hidden_state).squeeze(-1)
+
+        w = self.layer(last_hidden_state).squeeze(-1)
         w[mask==0] = float("-inf")
         score = torch.softmax(w,dim=-1)
 
@@ -70,6 +75,20 @@ class AttentionPooling(nn.Module):
         last_hidden_state = last_hidden_state * score
         attention_state = torch.sum(last_hidden_state,dim=1)
         return attention_state
+
+class LSTMPooling(nn.Module):
+    def __init__(self,lstm_hidden_num=768):
+        super(LSTMPooling, self).__init__()
+        self.lstm = nn.LSTM(768,lstm_hidden_num,batch_first=True)
+        self.linear = nn.Linear(lstm_hidden_num,768)
+    def forward(self,ft_all_layers):
+        all_hidden_state = torch.stack(ft_all_layers[1:])
+        hidden_state = torch.stack([all_hidden_state[i][:,0] for i in range(12)],dim=1)
+        lstm_out,_ = self.lstm(hidden_state)
+        lstm_out = lstm_out[:,-1]
+        out = self.linear(lstm_out)
+
+        return out
 
 class DeBert_Model(nn.Module):
     def __init__(self,model,get_sentence_embedding_method):
@@ -81,8 +100,9 @@ class DeBert_Model(nn.Module):
         self.min_pooling = MinPooling()
         self.max_pooling = MaxPooling()
         self.attention_pooling = AttentionPooling()
+        self.lstmpooling = LSTMPooling()
         self.get_sentence_embedding_method = get_sentence_embedding_method
-        assert get_sentence_embedding_method in ["CLS","MaxPooling","MeanPooling","MinPooling","AttentionPooling"]
+        assert get_sentence_embedding_method in ["CLS","MaxPooling","MeanPooling","MinPooling","AttentionPooling","LSTMPooling"]
     def forward(self,x,att_mask,y=None):
         last_hidden_state,pooler_output,ft_all_layers= self.bert(x,attention_mask = att_mask,return_dict=False,output_hidden_states=True)#[0][:,-1,:]
 
@@ -105,6 +125,9 @@ class DeBert_Model(nn.Module):
         elif self.get_sentence_embedding_method == "AttentionPooling":   #策略5
             sentence_embedding = self.attention_pooling(last_hidden_state, att_mask)
             logits = self.fc(sentence_embedding)
+        elif self.get_sentence_embedding_method == "LSTMPooling":   #策略5
+            sentence_embedding = self.lstmpooling(ft_all_layers)
+            logits = self.fc(sentence_embedding)
         if y is not None:
             loss = self.loss_fn(logits,y)
             return loss,logits,sentence_embedding
@@ -116,7 +139,7 @@ def setup_seed(seed):
     torch.cuda.manual_seed_all(seed)
     np.random.seed(seed)
     random.seed(seed)
-    torch.backends.cudnn.deterministic = True
+    # torch.backends.cudnn.deterministic = True
 
 
 
@@ -145,7 +168,7 @@ if __name__ == "__main__":
     dev_dataloader = DataLoader(dev_dataset, shuffle=False, batch_size=batch_size,
                                   collate_fn=sen_dataset.collate_fn)
 
-    model = DeBert_Model(model,"AttentionPooling").to(device)
+    model = DeBert_Model(model,"LSTMPooling").to(device)
     opt = torch.optim.Adam(model.parameters(),lr = lr)
     for e in range(epoch):
         train_model_pre = []
