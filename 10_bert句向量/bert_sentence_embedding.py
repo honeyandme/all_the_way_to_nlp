@@ -170,7 +170,7 @@ if __name__ == "__main__":
     num_class = 2
     max_length = 128
     epoch = 10
-    batch_size = 30
+    batch_size = 10
     lr = 0.00001
     device = "mps" if torch.backends.mps.is_available() else "cpu"
     # device = "cpu"
@@ -193,10 +193,13 @@ if __name__ == "__main__":
             x = x.to(device)
             at_mask = at_mask.to(device)
             y = y.to(device)
-            opt.zero_grad()
+
             loss,logits,sentence_embedding = model(x,at_mask,y)
             loss.backward()
-            opt.step()
+
+            if bi % 5 ==0:
+                opt.step()
+                opt.zero_grad()
 
             train_model_pre.extend(torch.argmax(logits,dim=-1).cpu().numpy().tolist())
             train_labels.extend(y.cpu().numpy().tolist())
