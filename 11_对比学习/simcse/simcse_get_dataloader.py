@@ -19,19 +19,19 @@ class s_dataset(Dataset):
         if self.mode == 'train':
             text = self.listdf[x]
             input_a = self.tokenizer(text,truncation = True,max_length = self.max_len)
-            return torch.as_tensor(input_a["input_ids"],dtype=torch.long), \
-                   torch.as_tensor(input_a["attention_mask"], dtype=torch.long)
+            return torch.as_tensor(input_a["input_ids"],dtype=torch.int), \
+                   torch.as_tensor(input_a["attention_mask"], dtype=torch.int)
         else:
             data = self.df.iloc[x]
             text_a,text_b,label = data['text_a'],data['text_b'],data['label']
             input_a = self.tokenizer(text_a, truncation=True, max_length=self.max_len)
             input_b = self.tokenizer(text_b, truncation=True, max_length=self.max_len)
             return {
-                "input_ids_a": torch.as_tensor(input_a['input_ids'],dtype=torch.long),
-                "attention_mask_a": torch.as_tensor(input_a['attention_mask'], dtype=torch.long),
-                "input_ids_b": torch.as_tensor(input_b['input_ids'], dtype=torch.long),
-                "attention_mask_b": torch.as_tensor(input_a['attention_mask'], dtype=torch.long),
-                "label": torch.as_tensor(label, dtype=torch.long),
+                "input_ids_a": torch.as_tensor(input_a['input_ids'],dtype=torch.int),
+                "attention_mask_a": torch.as_tensor(input_a['attention_mask'], dtype=torch.int),
+                "input_ids_b": torch.as_tensor(input_b['input_ids'], dtype=torch.int),
+                "attention_mask_b": torch.as_tensor(input_a['attention_mask'], dtype=torch.int),
+                "label": torch.as_tensor(label, dtype=torch.int),
             }
 
     def __len__(self):
@@ -41,8 +41,8 @@ class s_dataset(Dataset):
             return len(self.df)
 def collate_fn_train(batch):
     mx_len = max([len(x[0]) for x in batch])
-    batch_input_ids = torch.zeros((len(batch)*2,mx_len))
-    batch_attention_mask = torch.zeros((len(batch)*2,mx_len))
+    batch_input_ids = torch.zeros((len(batch)*2,mx_len),dtype=torch.int)
+    batch_attention_mask = torch.zeros((len(batch)*2,mx_len),dtype=torch.int)
 
     for i,x in enumerate(batch):
         batch_input_ids[2*i,:len(x[0])] = x[0]
@@ -72,7 +72,7 @@ def collate_fn_dev(batch):
         "attention_mask_a":batch_attention_mask_a,
         "input_ids_b": batch_input_ids_b,
         "attention_mask_b": batch_attention_mask_b,
-        "label":torch.as_tensor(label,dtype=torch.long)
+        "label":torch.as_tensor(label,dtype=torch.int)
     }
 def load_data(batch_size=30):
     train_df = pd.read_csv('../data/ants/train.csv')
