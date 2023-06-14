@@ -104,7 +104,7 @@ def load_data(batch_size=30):
     dev_dataset = P_dataset(dev_df, tokenizer, mode='dev')
     dev_dataloader = DataLoader(dev_dataset, batch_size=batch_size, shuffle=False, collate_fn=dev_dataset.collate_fn)
 
-    return train_dataloader,dev_dataloader
+    return train_dataset,dev_dataset,train_dataloader,dev_dataloader
 
 if __name__ == '__main__':
     train_dataloader,dev_dataloader = load_data()
