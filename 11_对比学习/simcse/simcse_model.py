@@ -1,9 +1,9 @@
 import torch
 from torch import nn
 from transformers import AutoModel
-class simcse(nn.Module):
+class Simcse(nn.Module):
     def __init__(self):
-        super(simcse, self).__init__()
+        super(Simcse, self).__init__()
         self.bert = AutoModel.from_pretrained('../../data/chinese-roberta-wwm-ext')
         self.meanpooling = Meanpooling()
         self.loss_fn  = nn.CrossEntropyLoss()
@@ -20,8 +20,8 @@ class simcse(nn.Module):
         id = torch.arange(0, sen_emb.shape[0], dtype=torch.long, device=sen_emb.device)
         y_true = id + 1 - id % 2 * 2
 
-        sim_martix = torch.cosine_similarity(sen_emb.unsqueeze(0),sen_emb.unsqueeze(1),dim=-1,)
-        sim_martix = sim_martix - torch.eye(sen_emb.shape[0])*1e9
+        sim_martix = torch.cosine_similarity(sen_emb.unsqueeze(0),sen_emb.unsqueeze(1),dim=-1)
+        sim_martix = sim_martix - torch.eye(sen_emb.shape[0],device=sen_emb.device)*1e9
         sim_martix = sim_martix/tao
 
         loss = self.loss_fn(sim_martix,y_true)
@@ -40,7 +40,7 @@ if __name__ == '__main__':
     from simcse_get_dataloader import load_data
 
     train_dataloader, dev_dataloader = load_data()
-    model = simcse()
+    model = Simcse()
     for data in train_dataloader:
         input_ids = data['input_ids']
         attention_mask = data['attention_mask']
