@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-from transformers import AutoTokenizer,AutoModel,AutoConfig
+from transformers import AutoModel,AutoConfig
 class PromptBert(nn.Module):
     def __init__(self,model_path,dropout_prob,tokenizer):
         super(PromptBert, self).__init__()
