@@ -59,6 +59,7 @@ if __name__ == '__main__':
         all_pre = []
         all_label = []
         model.eval()
+        best_acc = -1
         for data in tqdm(dev_loader):
             input_prompt_1 = data['input_prompt_1'].to(device)
             mask_prompt_1 = data['mask_prompt_1'].to(device)
@@ -81,4 +82,10 @@ if __name__ == '__main__':
 
                 all_pre.extend(pre)
                 all_label.extend(label)
-        print(f'acc={accuracy_score(all_pre,all_label):.5f}')
+        acc=accuracy_score(all_pre,all_label)
+        if best_acc<acc:
+            print(f'acc={acc:.5f}----------------->best')
+            torch.save(model.state_dict(),'best.pt')
+            best_acc = acc
+        else:
+            print(f'acc={acc:.5f}')
