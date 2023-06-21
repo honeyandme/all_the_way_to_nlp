@@ -119,13 +119,13 @@ def trainer():
         for data in pbar:
             input_ids_source = data['input_ids_source'].to(device)
             attention_mask_source = data['attention_mask_source'].to(device)
-            # input_ids_repeat = data['input_ids_repeat'].to(device)
-            # attention_mask_repeat = data['attention_mask_repeat'].to(device)
+            input_ids_repeat = data['input_ids_repeat'].to(device)
+            attention_mask_repeat = data['attention_mask_repeat'].to(device)
 
             opt.zero_grad()
 
             query_emb = query_model(input_ids_source,attention_mask_source)
-            key_emb = key_model(input_ids_source,attention_mask_source)
+            key_emb = key_model(input_ids_repeat,attention_mask_repeat)
 
             loss = cal_loss(query_emb,key_emb,queue_embeddings)
 
